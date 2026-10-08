@@ -1,0 +1,50 @@
+name: deck
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Export HTML (with diagrams)
+        run: |
+          mkdir -p dist
+          docker run --rm -v "$PWD:/home/marp/app" marpteam/marp-cli \
+            --allow-local-files hyperdeveloper-advanced.md \
+            -o dist/hyperdeveloper-advanced.html
+          cp -R diagrams dist/
+
+      - name: Export PDF
+        run: |
+          docker run --rm -v "$PWD:/home/marp/app" marpteam/marp-cli \
+            --allow-local-files hyperdeveloper-advanced.md \
+            --pdf -o dist/hyperdeveloper-advanced.pdf
+
+      - name: Export PPTX
+        run: |
+          docker run --rm -v "$PWD:/home/marp/app" marpteam/marp-cli \
+            --allow-local-files hyperdeveloper-advanced.md \
+            --pptx -o dist/hyperdeveloper-advanced.pptx
+
+      - name: Zip dist
+        run: cd dist && zip -r ../hyperdeveloper-advanced.zip .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hyperdeveloper-advanced
+          path: hyperdeveloper-advanced.zip
+
+      - name: Create release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: hyperdeveloper-advanced.zip

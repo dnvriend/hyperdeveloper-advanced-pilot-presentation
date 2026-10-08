@@ -1,0 +1,33 @@
+flowchart LR
+    ORC["orchestrator<br/>primary · router"]
+    REF["refinement-agent<br/>primary · conversation"]
+    TST["tester<br/>edit: server/src/test/**"]
+    SPR["spring-agent<br/>edit: server/src/main/**"]
+    SVL["svelte-agent<br/>edit: client/src/**"]
+    EXP["explore<br/>built-in, read-only"]
+    K1(["skill: testing-standards"])
+    K2(["skill: spring-conventions<br/>+ database-migrations"])
+    K3(["skill: svelte-patterns"])
+    GATE[["scripts/tdd-gate.sh"]]
+    RFD[(".opencode/refined/")]
+    BKL[(".opencode/backlog.md")]
+    REF -->|writes| RFD
+    ORC -->|reads| RFD
+    ORC -->|appends| BKL
+    ORC -->|task| EXP
+    ORC -->|task| TST
+    ORC -->|task| SPR
+    ORC -->|task| SVL
+    TST --> K1
+    SPR --> K2
+    SVL --> K3
+    TST -->|red| GATE
+    SPR -->|green| GATE
+    SVL -->|verify| GATE
+    ORC -->|"green / verify<br/>(trust, but verify)"| GATE
+    classDef primary fill:#fde8ee,stroke:#e8003d,color:#1f2430;
+    classDef sub fill:#eef3fb,stroke:#3d6bb3,color:#1f2430;
+    classDef gate fill:#e8f5e9,stroke:#2e7d32,color:#1f2430;
+    class ORC,REF primary;
+    class TST,SPR,SVL,EXP sub;
+    class GATE gate;

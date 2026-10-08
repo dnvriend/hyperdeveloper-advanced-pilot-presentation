@@ -1,0 +1,24 @@
+flowchart TB
+    subgraph S0["Refine"]
+        direction LR
+        RA["refinement-agent"] -->|writes| ST[(".opencode/refined/VET-5-….md")]
+    end
+    subgraph S1["RED"]
+        direction LR
+        RED["/red VET-5<br/>failing tests only"] --> GR{{"tdd-gate.sh red<br/>tests fail · main untouched · git add tests"}}
+        GR -.->|FAILED| RED
+    end
+    subgraph S2["GREEN"]
+        direction LR
+        GREEN["/green VET-5<br/>production code only"] --> GG{{"tdd-gate.sh green<br/>build ok · tests unchanged"}}
+        GG -.->|FAILED| GREEN
+    end
+    subgraph S3["DONE"]
+        direction LR
+        DONE["/done VET-5<br/>gate runs before the model"] --> GD{{"tdd-gate.sh done<br/>verify → move story"}} --> CP[(".opencode/completed/<br/>+ changelog row")] --> YOU([you review + commit])
+    end
+    S0 --> S1 -->|PASSED| S2 -->|PASSED| S3
+    classDef gate fill:#e8f5e9,stroke:#2e7d32,color:#1f2430;
+    classDef cmd fill:#fde8ee,stroke:#e8003d,color:#1f2430;
+    class GR,GG,GD gate;
+    class RED,GREEN,DONE cmd;

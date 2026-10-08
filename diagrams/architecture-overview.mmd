@@ -1,0 +1,24 @@
+flowchart LR
+    DEV([Developer])
+    CMD["Commands<br/>/red /green /done /build<br/>$1 · !`shell` · @file"]
+    PA["Primary agents<br/>build · plan<br/>orchestrator · refinement-agent"]
+    SA["Subagents<br/>explore · general<br/>tester · spring-agent · svelte-agent"]
+    SK(["Skills<br/>on demand"])
+    MEM["AGENTS.md<br/>always loaded"]
+    GUARD["Permissions + Plugins<br/>checked on every tool call"]
+    TOOLS["MCP · LSP<br/>eyes and hands"]
+    GATE[["Gates<br/>tdd-gate.sh exit code"]]
+    DEV -->|prompt| PA
+    DEV -->|"/command"| CMD
+    CMD -->|"agent:"| PA
+    PA -->|task| SA
+    PA -->|skill tool| SK
+    SA -->|skill tool| SK
+    MEM -.-> PA
+    GUARD -.-> PA
+    GUARD -.-> SA
+    SA --> TOOLS
+    SA -->|bash| GATE
+    GATE -->|pass / fail| SA
+    classDef harness fill:#e8f5e9,stroke:#2e7d32,color:#1f2430;
+    class GUARD,GATE harness;

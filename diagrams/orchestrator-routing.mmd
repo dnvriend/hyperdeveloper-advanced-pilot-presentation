@@ -1,0 +1,18 @@
+flowchart TD
+    U([User message]) --> O{{"orchestrator<br/>(primary, edit: deny)"}}
+    O -->|"how / what / where / why"| Q["ROUTE: QUESTION"]
+    O -->|"one behaviour,<br/>clear acceptance"| S["ROUTE: SMALL CHANGE"]
+    O -->|"vague, many layers,<br/>no acceptance"| F["ROUTE: NEW FEATURE"]
+    O -->|"VET-# in .opencode/refined/"| R["ROUTE: REFINED STORY"]
+    Q --> EX["task → explore"] --> A1([answer with file:line])
+    S --> T1["task → tester (RED)"] --> SP1["task → spring-agent (GREEN)"] --> G1["tdd-gate.sh green"]
+    F --> BL[".opencode/backlog.md"] --> RA([refine with refinement-agent])
+    R --> T2["task → tester (RED)"] --> SP2["task → spring-agent (GREEN)"] --> G2["tdd-gate.sh green"]
+    G2 -->|"labels: frontend"| SV["task → svelte-agent"] --> G3["tdd-gate.sh verify"]
+    G1 --> D1([review + commit])
+    G2 --> D2([review + /done VET-#])
+    G3 --> D2
+    classDef route fill:#fde8ee,stroke:#e8003d,color:#1f2430;
+    classDef gate fill:#e8f5e9,stroke:#2e7d32,color:#1f2430;
+    class Q,S,F,R route;
+    class G1,G2,G3 gate;
