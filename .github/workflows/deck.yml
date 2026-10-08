@@ -18,20 +18,20 @@ jobs:
       - name: Export HTML (with diagrams)
         run: |
           mkdir -p dist
-          docker run --rm -v "$PWD:/home/marp/app" marpteam/marp-cli \
+          docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/home/marp/app" marpteam/marp-cli \
             --allow-local-files hyperdeveloper-advanced.md \
             -o dist/hyperdeveloper-advanced.html
           cp -R diagrams dist/
 
       - name: Export PDF
         run: |
-          docker run --rm -v "$PWD:/home/marp/app" marpteam/marp-cli \
+          docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/home/marp/app" marpteam/marp-cli \
             --allow-local-files hyperdeveloper-advanced.md \
             --pdf -o dist/hyperdeveloper-advanced.pdf
 
       - name: Export PPTX
         run: |
-          docker run --rm -v "$PWD:/home/marp/app" marpteam/marp-cli \
+          docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/home/marp/app" marpteam/marp-cli \
             --allow-local-files hyperdeveloper-advanced.md \
             --pptx -o dist/hyperdeveloper-advanced.pptx
 
