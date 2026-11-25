@@ -7,12 +7,12 @@ sequenceDiagram
     participant S as spring-agent
     Dev->>O: "Build VET-5."
     O->>O: ROUTE: REFINED STORY (ls .opencode/refined)
-    O->>T: task: RED for .opencode/refined/VET-5-*.md
+    O->>T: subagent: RED for .opencode/refined/VET-5-*.md
     T->>T: load skill testing-standards, write tests (server/src/test/** only)
     T->>G: red
     G-->>T: GATE PASSED (tests fail, snapshot via git add)
     T-->>O: AC → test table + GATE PASSED
-    O->>S: task: GREEN for VET-5
+    O->>S: subagent: GREEN for VET-5
     S->>S: load skills, edit server/src/main/**
     S->>G: green
     G-->>S: GATE PASSED (build ok, tests unchanged)

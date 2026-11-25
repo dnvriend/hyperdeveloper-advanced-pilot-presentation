@@ -45,7 +45,7 @@ Dennis Vriend — ilionx
 | "Please don't modify the tests" in a prompt | Agent *cannot* edit `server/src/test/**` (permission) |
 | "Run the tests before you finish" | `scripts/tdd-gate.sh` exit code decides |
 | "Look up the story first" | Command injects the story with `` !`cat …` `` |
-| "Only route, don't code" | Orchestrator has `edit: deny`, `task:` allowlist |
+| "Only route, don't code" | Orchestrator has `edit` deny, `subagent` allowlist |
 
 A smarter model hides bad architecture. A mid-tier model (GLM 5.3) exposes it.
 **Design so the model can't get it wrong.**
@@ -114,7 +114,7 @@ Everything from the foundation still works
 
 # Prerequisites — checks
 
-OpenCode **1.x (≥ 1.18)** — we use v1, **not** v2.
+OpenCode **2.x** (`opencode --version`).
 
 ```shell
 cd vethub
@@ -133,7 +133,7 @@ which node          # should contain .local/share/mise
 # git
 git --version
 
-# opencode (1.18+, not 2.x)
+# opencode (2.x)
 opencode --version
 ```
 
@@ -354,8 +354,10 @@ see: https://opencode.ai/docs/agents/
 description: Explains what the agent does or when it should be invoked.
 mode: primary|subagent|all   # all = default
 color: red|blue|..           # optional
-permission:
-  question: allow            # custom agents: deny by default
+permissions:
+  - action: question
+    resource: "*"
+    effect: allow            # custom agents: deny by default
 ---
 # Refinement Agent
 
@@ -453,14 +455,16 @@ MCP · codegraph · LSP · plugins · permissions · built-in agents
 # MCP — giving the agent hands and eyes
 
 **Model Context Protocol**: a standard for exposing *tools* to an agent.
-OpenCode starts the server; its tools appear next to `read`, `edit`, `bash`.
+OpenCode starts the server; its tools appear next to `read`, `edit`, `shell`.
 
 ```jsonc
 // .opencode/opencode.json
 "mcp": {
-  "chrome-devtools": { "type": "local", "command": ["npx", "-y", "chrome-devtools-mcp@latest"], "enabled": true },
-  "context7":        { "type": "local", "command": ["bunx", "-y", "@upstash/context7-mcp@latest"], "enabled": true },
-  "codegraph":       { "type": "local", "command": ["codegraph", "serve", "--mcp"], "enabled": true }
+  "servers": {
+    "chrome-devtools": { "type": "local", "command": ["npx", "-y", "chrome-devtools-mcp@latest"] },
+    "context7":        { "type": "local", "command": ["bunx", "-y", "@upstash/context7-mcp@latest"] },
+    "codegraph":       { "type": "local", "command": ["codegraph", "serve", "--mcp"] }
+  }
 }
 ```
 
@@ -469,7 +473,7 @@ opencode mcp list        # ✓ connected / ✗ failed
 ```
 
 Tool names are prefixed by the server: `chrome-devtools_take_snapshot`, `context7_get-library-docs`, …
-→ which means you can **permission** them: `"chrome-devtools_*": "deny"`.
+→ which means you can **permission** them: `{ "action": "chrome-devtools_*", "resource": "*", "effect": "deny" }`.
 
 ---
 
@@ -517,7 +521,7 @@ codegraph status           # files, nodes, edges, DB size
 codegraph sync             # update after changes (the MCP server also watches files)
 ```
 
-**As MCP** (`opencode.json`): `"codegraph": { "type": "local", "command": ["codegraph", "serve", "--mcp"] }`
+**As MCP** (`opencode.json`): `"mcp": { "servers": { "codegraph": { "type": "local", "command": ["codegraph", "serve", "--mcp"] } } }`
 → tools such as `codegraph_explore`, `codegraph_node` (OpenCode shows them as `codegraph_codegraph_explore`).
 
 **Query it yourself** — the same answers the agent gets:
@@ -554,22 +558,27 @@ A strong model shrugs ("Lombok noise"); a weaker one starts "fixing" correct cod
 
 # Plugins — code that hooks into the harness
 
-A plugin is a TypeScript module with **event hooks**. It runs code, not prompts.
+A plugin is a TypeScript module with **event hooks** (`Plugin.define` in OpenCode v2). It runs code, not prompts.
 
 ```jsonc
-"plugin": ["@mohak34/opencode-notifier@latest", "opencode-acp@stable"]
+"plugins": []   // add v2 packages here; v1 plugins do not run in v2
 ```
 
-| Plugin | Hook | Use |
+| Capability | In OpenCode v2 | Use |
 |---|---|---|
-| opencode-notifier | session idle / permission asked | desktop notification: "agent needs you" |
-| opencode-acp | Agent Client Protocol | drive OpenCode from an editor (Zed, JetBrains) |
-| **exec-cli-check** (own) | `tool.execute.before` on `bash` | block destructive / cloud-mutating commands *before* they run |
+| Notifications | built-in | desktop notification: "agent needs you" |
+| ACP (`opencode acp`) | built-in subcommand | drive OpenCode from an editor (Zed, JetBrains) |
+| **exec-cli-check** (own) | `tool.execute.before` on `shell` | block destructive / cloud-mutating commands *before* they run |
 
 ```ts
-export const ExecCliCheck: Plugin = async () => ({
-  "tool.execute.before": async (input, output) => {
-    if (input.tool === "bash" && isForbidden(output.args.command)) throw new Error("blocked by policy")
+import { Plugin } from "@opencode/plugin"
+
+export default Plugin.define({
+  id: "exec-cli-check",
+  setup(api) {
+    api.on("tool.execute.before", async (input, output) => {
+      if (input.tool === "shell" && isForbidden(output.args.command)) throw new Error("blocked by policy")
+    })
   },
 })
 ```
@@ -580,22 +589,20 @@ Location: `~/.config/opencode/plugins/*.ts` (global) or `.opencode/plugins/` (pr
 
 # Permissions — the rulebook
 
-Three actions: `allow` · `ask` · `deny`. **Last matching rule wins.**
+Three effects: `allow` · `ask` · `deny`. Ordered array — **last matching rule wins.**
 
 ```jsonc
-"permission": {
-  "bash": {
-    "git *": "ask",
-    "git commit *": "allow",
-    "git reset *": "deny",
-    "git push *": "deny"
-  },
-  "edit": { "*": "allow", "client/src/lib/types/**": "deny" },   // generated code
-  "external_directory": { "~/.config/opencode/**": "allow" }
-}
+"permissions": [
+  { "action": "shell", "resource": "git *", "effect": "ask" },
+  { "action": "shell", "resource": "git commit *", "effect": "allow" },
+  { "action": "shell", "resource": "git reset *", "effect": "deny" },
+  { "action": "shell", "resource": "git push *", "effect": "deny" },
+  { "action": "edit",  "resource": "client/src/lib/types/**", "effect": "deny" }, // generated code
+  { "action": "external_directory", "resource": "~/.config/opencode/**", "effect": "allow" }
+]
 ```
 
-Keys: `read edit bash task skill webfetch question external_directory …` + MCP tool names.
+Actions: `read edit shell subagent skill webfetch question external_directory …` + MCP tool names.
 Scope: global `opencode.json` → project `opencode.json` → **per agent** (Part 6).
 
 > Permissions are the first harness lever: rules the model **cannot** talk its way around.
@@ -612,8 +619,8 @@ Scope: global `opencode.json` → project `opencode.json` → **per agent** (Par
 | `explore` | subagent | fast read-only codebase search |
 
 - **Primary** = you talk to it. Switch: `Tab`, `<leader>a` (list), `opencode --agent X`, `"default_agent"`
-- **Subagent** = runs in a child session, returns a summary. Call: `@explore …` or the `task` tool
-- Toggle: `"agent": { "plan": { "disable": true } }`
+- **Subagent** = runs in a child session, returns a summary. Call: `@explore …` or the `subagent` tool
+- Toggle: `"agents": { "plan": { "disabled": true } }`
 
 > Only a **primary** agent can hold a conversation with you.
 > Custom agents have `question: deny` by default — `build`/`plan` get `allow`.
@@ -650,12 +657,12 @@ Scope: global `opencode.json` → project `opencode.json` → **per agent** (Par
 2. **Spring Boot** — remove `"jdtls": { "disabled": true }`, restart, let the agent edit `Vet.java`. Count the Lombok false positives. Put it back. When would jdtls be worth it?
 
 **MCP on/off**
-3. In the TUI: **`/mcps`** → select a server → **space** toggles it. Disable `context7`, ask a docs question, observe the fallback. Permanent: `"enabled": false`.
+3. In the TUI: **`/mcps`** → select a server → **space** toggles it. Disable `context7`, ask a docs question, observe the fallback. Permanent: `"disabled": true`.
 
 **Permissions**
-4. Add `"git push *": "deny"` (check it is there) and ask the agent to push. Read the denial.
+4. Check `{ "action": "shell", "resource": "git push *", "effect": "deny" }` is present and ask the agent to push. Read the denial.
 5. Create a fake `server/.env`, ask the agent to print it. Default is `ask` for `*.env` — make it `deny` and retry.
-6. Add `"edit": { "client/src/lib/types/**": "deny" }` and ask the agent to "fix" a type in `api.d.ts`. What does it do instead?
+6. Add `{ "action": "edit", "resource": "client/src/lib/types/**", "effect": "deny" }` and ask the agent to "fix" a type in `api.d.ts`. What does it do instead?
 
 ---
 
@@ -846,7 +853,7 @@ Demo: *"Add a `phone` field to the owner response."* → watch which skills get 
 1. At start, every agent sees the **list**: `name` + `description` of each skill it is allowed to use
 2. When the task matches a description, the agent calls the **`skill` tool** → the body is loaded
 3. You can force it: *"Use the `testing-standards` skill and …"*
-4. You can restrict it per agent: `permission.skill: { "*": deny, "testing-standards": allow }`
+4. You can restrict it per agent: `permissions: [{ action: skill, resource: "*", effect: deny }, { action: skill, resource: "testing-standards", effect: allow }]`
 
 What the `skill` tool returns to the model:
 
@@ -902,11 +909,11 @@ Scripts make the skill **deterministic**: the model calls a tested script instea
 
 1. **First skill** — `~/.config/opencode/skills/commit-message/SKILL.md`: conventional-commit rules. Ask *"write a commit message for my staged changes"* — did it load the skill without you naming it?
 2. **Force it** — *"Use the commit-message skill …"*. Compare the tool calls with exercise 1.
-3. **Collision** — create a skill `foo` globally (*"The word we know is AAA"*) **and** in the project (*"First read the global skill. The word is double the word we know"*). Ask *"use the foo skill: what is the word?"* in 3 fresh sessions. Same answer every time? (`opencode --print-logs` → `duplicate skill name`)
+3. **Collision** — create a skill `foo` globally (*"The word we know is AAA"*) **and** in the project (*"First read the global skill. The word is double the word we know"*). Ask *"use the foo skill: what is the word?"* in 3 fresh sessions. Same answer every time? (`opencode --print-logs --standalone` → `duplicate skill name`)
 4. **"Inheritance" done right** — rename to `foo-global` and `foo`; the project `description`: *"Extends foo-global; load it first. On conflict this skill wins."* Repeat exercise 3.
 5. **Scripts** — add `scripts/wordcount.py` (run with `uv run`) to a `text-stats` skill and reference it from `SKILL.md`. Ask for stats on `README.md`; check it ran the script.
 6. **References** — move the examples of `testing-standards` into `references/examples.md`; leave a one-line pointer. Does the agent still find them when it writes a test?
-7. **Scope** — give `plan` `permission.skill: { "*": deny }` and ask it to use a skill. What happens?
+7. **Scope** — give `plan` `{ "action": "skill", "resource": "*", "effect": "deny" }` and ask it to use a skill. What happens?
 
 **Homework** — extract one skill from your own project's README or wiki.
 
@@ -1017,11 +1024,14 @@ Who does it, with which rights
 description: TDD RED specialist. Writes failing backend tests. Cannot touch production code.
 mode: subagent              # primary | subagent | all (default)
 temperature: 0.1
-permission:
-  edit:  { "*": deny, "server/src/test/**": allow }
-  bash:  { "*": deny, "scripts/tdd-gate.sh *": allow }
-  skill: { "*": deny, "testing-standards": allow }
-  task: deny
+permissions:
+  - { action: edit,     resource: "*",                    effect: deny }
+  - { action: edit,     resource: "server/src/test/**",   effect: allow }
+  - { action: shell,    resource: "*",                    effect: deny }
+  - { action: shell,    resource: "scripts/tdd-gate.sh *", effect: allow }
+  - { action: skill,    resource: "*",                    effect: deny }
+  - { action: skill,    resource: "testing-standards",    effect: allow }
+  - { action: subagent, resource: "*",                    effect: deny }
 ---
 You are the tester for vethub. You do exactly one thing: TDD phase RED. …
 ```
@@ -1038,12 +1048,12 @@ Same name in `~/.config/opencode/agents/` and `.opencode/agents/`:
 | Part | Behaviour |
 |---|---|
 | scalar keys (`model`, `temperature`, `mode`, `description`) | project replaces global |
-| object keys (`permission`, `options`) | **deep-merged** key by key |
+| `permissions` rules | **appended** — last matching rule wins |
 | **body (prompt)** | **fully replaced** — the global prompt is gone |
 | empty project body | replaces the global prompt with nothing |
 
-- You cannot *remove* a global key, only override it
-- A global `permission.edit: allow` survives unless the project overrides that key
+- You cannot *remove* a global rule, only append a later override
+- A global `{ action: edit, resource: "*", effect: allow }` survives unless the project appends a matching rule
 
 → Put shared knowledge in **skills** (additive); keep agent bodies short and specific.
 
@@ -1051,7 +1061,7 @@ Same name in `~/.config/opencode/agents/` and `.opencode/agents/`:
 
 # Specialists with scoped rights
 
-| Agent | Mode | May edit | Bash | Skills |
+| Agent | Mode | May edit | Shell | Skills |
 |---|---|---|---|---|
 | `refinement-agent` | primary | `.opencode/refined/` | read-only | — |
 | `tester` | subagent | `server/src/test/**` | only `tdd-gate.sh` | testing-standards |
@@ -1060,7 +1070,7 @@ Same name in `~/.config/opencode/agents/` and `.opencode/agents/`:
 
 The invariant "don't modify the tests" is now:
 1. impossible via the edit tool (**permission**)
-2. detected if done via bash (`sed -i`) (**gate**)
+2. detected if done via shell (`sed -i`) (**gate**)
 3. still in the prompt — as explanation, not as defence
 
 ---
@@ -1081,8 +1091,8 @@ The invariant "don't modify the tests" is now:
 → the edit is **denied by the harness**:
 ```text
 The user has specified a rule which prevents you from using this specific tool call.
-[{"permission":"edit","pattern":"*","action":"deny"},
- {"permission":"edit","pattern":"server/src/test/**","action":"allow"}]
+[{"action":"edit","resource":"*","effect":"deny"},
+ {"action":"edit","resource":"server/src/test/**","effect":"allow"}]
 ```
 `git status` → `Vet.java` untouched. **You tested the system, not the model.**
 
@@ -1099,10 +1109,10 @@ git diff adv-part-5 adv-part-6 -- .opencode/commands
 description: TDD lifecycle via specialist subagents (usage /build VET-5)
 agent: build
 ---
-Conduct story $1. Do not write or edit code yourself; delegate with the task tool.
-1. task → tester: "RED for the story at <path>". Continue only if the reply contains GATE PASSED.
-2. task → spring-agent: "GREEN …". Then run scripts/tdd-gate.sh green yourself.
-3. If labels contain frontend: task → svelte-agent. Then run scripts/tdd-gate.sh verify yourself.
+Conduct story $1. Do not write or edit code yourself; delegate with the subagent tool.
+1. subagent → tester: "RED for the story at <path>". Continue only if the reply contains GATE PASSED.
+2. subagent → spring-agent: "GREEN …". Then run scripts/tdd-gate.sh green yourself.
+3. If labels contain frontend: subagent → svelte-agent. Then run scripts/tdd-gate.sh verify yourself.
 4. Report per acceptance criterion. Ask me to review and run /done $1.
 ```
 
@@ -1119,7 +1129,7 @@ And `/red` → `agent: tester`, `/green` → `agent: spring-agent` — a **one-l
 |---|---|---|
 | Talk to a **primary** agent | `Tab` / `<leader>a` / `opencode --agent X` / `"default_agent"` | `opencode --agent refinement-agent` |
 | Hand one task to a **subagent** | `@name` in your message | `@explore where is VisitService used?` |
-| Let an agent **delegate** | it calls the `task` tool | orchestrator → `task(tester, "RED for …")` |
+| Let an agent **delegate** | it calls the `subagent` tool | orchestrator → `subagent(tester, "RED for …")` |
 | Bind a **command** to an agent | `agent:` in the command frontmatter | `/red` → `agent: tester` (runs as subtask) |
 | Look inside a subagent's work | step into the child session | `ctrl+x →` / `←` in the TUI |
 
@@ -1137,7 +1147,11 @@ Gotchas
 --- reviewer.md ---
 description: Reviews the current diff against a story's acceptance criteria. Read-only.
 mode: subagent
-permission: { edit: deny, bash: { "*": deny, "git diff*": allow, "git status*": allow } }
+permissions:
+  - { action: edit,  resource: "*",           effect: deny }
+  - { action: shell, resource: "*",           effect: deny }
+  - { action: shell, resource: "git diff*",   effect: allow }
+  - { action: shell, resource: "git status*", effect: allow }
 ---
 List each AC as ✅ / ❌ with file:line evidence. Never suggest style nits.
 ```
@@ -1146,7 +1160,10 @@ List each AC as ✅ / ❌ with file:line evidence. Never suggest style nits.
 --- docs-writer.md ---
 description: Writes and updates markdown documentation only.
 mode: primary
-permission: { edit: { "*": deny, "**/*.md": allow }, bash: deny }
+permissions:
+  - { action: edit,  resource: "*",       effect: deny }
+  - { action: edit,  resource: "**/*.md", effect: allow }
+  - { action: shell, resource: "*",       effect: deny }
 ---
 ```
 
@@ -1154,7 +1171,11 @@ permission: { edit: { "*": deny, "**/*.md": allow }, bash: deny }
 --- db-explainer.md ---
 description: Explains the database schema from Liquibase changesets. Read-only.
 mode: subagent
-permission: { edit: deny, bash: deny, skill: { "*": deny, database-migrations: allow } }
+permissions:
+  - { action: edit,  resource: "*",                   effect: deny }
+  - { action: shell, resource: "*",                   effect: deny }
+  - { action: skill, resource: "*",                   effect: deny }
+  - { action: skill, resource: "database-migrations", effect: allow }
 ---
 ```
 
@@ -1170,7 +1191,7 @@ permission: { edit: deny, bash: deny, skill: { "*": deny, database-migrations: a
 4. **docs-writer** — create the primary `docs-writer`; ask it to update `README.md` **and** a Java file. Which edit is denied?
 5. **Merge vs replace** — create `~/.config/opencode/agents/tester.md` with `temperature: 0.9` and a different body. Which temperature and which prompt win in the project? (Hint: frontmatter merges, body is replaced.)
 6. **Skill scope** — ask `@tester` to load `spring-conventions`. What does the harness say?
-7. **Extend /build** — add a step 3½: `task → reviewer`; stop when an AC is ❌.
+7. **Extend /build** — add a step 3½: `subagent → reviewer`; stop when an AC is ❌.
 
 **Homework** — draw your own team as agents: who may edit what, who may run what?
 
@@ -1190,18 +1211,23 @@ A message router with no hands
 
 | Route | Signal | Action |
 |---|---|---|
-| **QUESTION** | how / what / where / why | task → `explore`, answer with `file:line` |
+| **QUESTION** | how / what / where / why | subagent → `explore`, answer with `file:line` |
 | **SMALL CHANGE** | one behaviour, clear acceptance | `tester` → `spring-agent` |
 | **NEW FEATURE** | vague, many layers | append to `.opencode/backlog.md` → "refine with refinement-agent" |
 | **REFINED STORY** | `VET-#` in `.opencode/refined/` | `tester` → `spring-agent` → `svelte-agent` if frontend |
 
 ```yaml
 mode: primary
-permission:
-  edit:  { "*": deny, ".opencode/backlog.md": allow }
-  bash:  { "*": deny, "ls *": allow, "scripts/tdd-gate.sh green": allow, "scripts/tdd-gate.sh verify": allow }
-  task:  { "*": deny, explore: allow, tester: allow, spring-agent: allow, svelte-agent: allow }
-  question: allow
+permissions:
+  - { action: edit,     resource: "*",                         effect: deny }
+  - { action: edit,     resource: ".opencode/backlog.md",      effect: allow }
+  - { action: shell,    resource: "*",                         effect: deny }
+  - { action: shell,    resource: "ls *",                      effect: allow }
+  - { action: shell,    resource: "scripts/tdd-gate.sh green", effect: allow }
+  - { action: shell,    resource: "scripts/tdd-gate.sh verify", effect: allow }
+  - { action: subagent, resource: "*",                         effect: deny }
+  - { action: subagent, resource: "explore",                   effect: allow } # + tester, spring-agent, svelte-agent
+  - { action: question, resource: "*",                         effect: allow }
 ```
 
 It **cannot** write code — so it **must** route.
@@ -1230,7 +1256,7 @@ and only a primary agent can talk to you.
 |---|---|
 | a **primary** agent you talk to | a framework or a new OpenCode feature |
 | a **classifier**: one message → one route | a developer: it can't edit code |
-| a **dispatcher**: `task` to an allowlist of subagents | a memory: subagents start empty |
+| a **dispatcher**: `subagent` to an allowlist of subagents | a memory: subagents start empty |
 | a **checker**: re-runs the gate after delegation | a judge of quality: gates and tests are |
 
 Three ingredients, all files in `.opencode/agents/orchestrator.md`:
@@ -1267,7 +1293,7 @@ You are the vethub orchestrator. You route; you never implement.          ← ro
 Start every reply with `ROUTE: <name>`, then act.                         ← observable decision
 
 | Route | Signal | Action |                                              ← the routing table:
-| QUESTION      | how / what / where / why        | task → explore …      |   signal = how to classify
+| QUESTION      | how / what / where / why        | subagent → explore …  |   signal = how to classify
 | SMALL CHANGE  | one behaviour, clear acceptance | tester → spring-agent |   action = which subagents
 | NEW FEATURE   | vague, several layers           | backlog + refine      |
 | REFINED STORY | VET-# in .opencode/refined/     | tester → spring → svelte |
@@ -1286,8 +1312,8 @@ The **prompt** chooses the route. The **frontmatter** guarantees it can only rou
 
 # Design decisions
 
-- **Router without hands** — `edit: deny` (except `backlog.md`), `bash: deny` (except `ls` and two gate calls). If it can't code, it won't "just quickly fix it".
-- **Allowlisted delegation** — `task: { "*": deny, explore, tester, spring-agent, svelte-agent }`. New agent? Explicitly add it.
+- **Router without hands** — `edit` deny (except `backlog.md`), `shell` deny (except `ls` and two gate calls). If it can't code, it won't "just quickly fix it".
+- **Allowlisted delegation** — `subagent` deny `*`, allow `explore`, `tester`, `spring-agent`, `svelte-agent`. New agent? Explicitly add it.
 - **Refinement is not a route target** — refinement is a conversation; only a primary agent can talk to you. The orchestrator sends you there.
 - **Trust, but verify** — subagents report `GATE PASSED`; the orchestrator re-runs the gate. A claim is not evidence.
 - **Human gates stay** — `/done` and `git commit` remain yours.
@@ -1320,9 +1346,9 @@ The **prompt** chooses the route. The **frontmatter** guarantees it can only rou
 | Project facts | AGENTS.md (lean) | loaded always |
 | Know-how | skills (flat namespace, unique names) | loaded on demand |
 | Workflow steps | commands + `` !`shell` `` injection | input yes, execution model |
-| Who may do what | agent `permission` (edit / bash / task / skill) | **yes** |
+| Who may do what | agent `permissions` (edit / shell / subagent / skill) | **yes** |
 | Done = done | `scripts/tdd-gate.sh` exit codes | **yes** |
-| Routing | orchestrator prompt + `task` allowlist | choice model, options harness |
+| Routing | orchestrator prompt + `subagent` allowlist | choice model, options harness |
 | Runtime guard | plugins (`tool.execute.before`) | **yes** |
 | Eyes & tools | MCP (chrome-devtools, codegraph, context7), LSP | tools |
 
@@ -1351,9 +1377,9 @@ The **prompt** chooses the route. The **frontmatter** guarantees it can only rou
 |---|---|---|---|
 | **Primary agent** | the agent you talk to | `agents/<name>.md`, `mode: primary` | only one that can ask you questions |
 | **Subagent** | a delegated specialist | `agents/<name>.md`, `mode: subagent` | child session, no chat history, returns a summary |
-| **Built-in agents** | build · plan · explore · general | built in | toggle with `"agent": { x: { disable } }` |
-| **Orchestrator** | a primary that only routes | `agents/orchestrator.md` | `edit: deny`, `task:` allowlist |
-| **Permissions** | allow · ask · deny | `opencode.json` + agent frontmatter | last match wins; edit globs, bash patterns, task, skill, MCP tools |
+| **Built-in agents** | build · plan · explore · general | built in | toggle with `"agents": { x: { disabled } }` |
+| **Orchestrator** | a primary that only routes | `agents/orchestrator.md` | `edit` deny, `subagent` allowlist |
+| **Permissions** | allow · ask · deny | `opencode.json` + agent frontmatter | ordered array, last match wins; edit, shell, subagent, skill, MCP tools |
 
 Agents with the same name: **frontmatter merges, body is replaced**. Skills: **flat namespace, unique names**.
 
@@ -1365,7 +1391,7 @@ Agents with the same name: **frontmatter merges, body is replaced**. Skills: **f
 |---|---|---|---|
 | **MCP** | external tools (browser, docs, code index) | `"mcp"` in `opencode.json`, `/mcps` | tools yes, their use: model |
 | **LSP** | compiler diagnostics after edits | `"lsp"` | yes — if the server is right (Lombok!) |
-| **Plugins** | code on harness events | `plugin` list, `plugins/*.ts` | **yes** (`tool.execute.before`) |
+| **Plugins** | code on harness events | `plugins` list, `plugins/*.ts` | **yes** (`Plugin.define`) |
 | **Scripts / gates** | `tdd-gate.sh`, `openapi-sync.sh` | `scripts/` | **yes** — exit codes |
 | **Local Jira** | `refined/` → `completed/`, `backlog.md` | `.opencode/` | files, versioned in git |
 | **Git** | snapshot of the tests, tags per part | the repo | **yes** — `git diff --quiet` |
@@ -1472,7 +1498,7 @@ Inventory (injected by the harness):   !`ls -1 .opencode/skills`   !`ls -1 .open
 3. Scan this conversation: 🔴 corrections · 🟡 successes · 🔵 edge cases — quote them as evidence
 4. Propose ≤ 5 exact changes    5. Ask: Apply · Tweak · Save as observation · Discard
 6. Apply → show git diff, you commit    7. Observation → .opencode/reflect/OBSERVATIONS.md
-Rule: a change to permission: is always 🔴 HIGH — it changes what the harness allows.
+Rule: a change to permissions: is always 🔴 HIGH — it changes what the harness allows.
 ```
 
 Dry run (GLM 5.3): corrected *"always put the story id in the @DisplayName"* →
@@ -1504,7 +1530,7 @@ Dry run (GLM 5.3): corrected *"always put the story id in the @DisplayName"* →
 
 ```bash
 opencode --agent orchestrator          # start with a primary agent
-opencode run --command story VET-5     # run a command non-interactively
+opencode run "/story VET-5"            # run a command non-interactively
 opencode mcp list                      # MCP status
 scripts/tdd-gate.sh red|green|verify|status|done VET-#
 git checkout adv-part-N                # catch up
